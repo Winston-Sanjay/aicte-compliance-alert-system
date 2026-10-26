@@ -1,0 +1,381 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── USER & AUTH ────────────────────────────────────────────
+
+enum UserRole {
+  INSTITUTION
+  OFFICER
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  role          UserRole
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  reviewerAssignments ReviewerAssignment[]
+  reviewComments      ReviewComment[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+
+  @@index([role])
+  @@index([email])
+}
+
+// ─── INSTITUTION ────────────────────────────────────────────
+
+model Institution {
+  id              String   @id @default(uuid())
+  name            String
+  institutionCode String   @unique
+  type            String   // e.g., "Engineering", "Polytechnic", "Management"
+  state           String
+  district        String
+  address         String
+  contactPerson   String
+  contactEmail    String
+  contactPhone    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users        User[]
+  applications Application[]
+
+  @@index([name])
+  @@index([state])
+}
+
+// ─── APPLICATION CATEGORY ───────────────────────────────────
+
+model ApplicationCategory {
+  id          String @id @default(uuid())
+  code        String @unique   // e.g., "EOA", "NEW_PROG", "INTAKE_INCREASE", "NEW_INST"
+  name        String
+  description String
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  checklistRules ChecklistRule[]
+  applications   Application[]
+}
+
+// ─── APPLICATION ────────────────────────────────────────────
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  VALIDATION_IN_PROGRESS
+  CORRECTION_REQUIRED
+  RESUBMITTED
+  UNDER_REVIEW
+  ADDITIONAL_INFO_REQUESTED
+  READY_FOR_DECISION
+  DECISION_RECORDED
+  CLOSED
+}
+
+model Application {
+  id             String            @id @default(uuid())
+  applicationNo  String            @unique
+  categoryId     String
+  category       ApplicationCategory @relation(fields: [categoryId], references: [id])
+  institutionId  String
+  institution    Institution       @relation(fields: [institutionId], references: [id])
+  status         ApplicationStatus @default(DRAFT)
+  
+  // Programme details
+  programmeName       String?
+  discipline          String?
+  qualificationLevel  String?
+  academicYear        String?
+  existingIntake      Int?
+  proposedIntake      Int?
+  affiliatingBody     String?
+
+  // Metadata
+  submittedAt    DateTime?
+  deadlineDate   DateTime?
+  decisionNote   String?
+  decisionOutcome String?
+  decisionAt      DateTime?
+  
+  currentStep    Int       @default(1)
+  formData       Json?     // Flexible storage for additional form fields
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  documents           ApplicationDocument[]
+  validationRuns      ValidationRun[]
+  reviewerAssignments ReviewerAssignment[]
+  reviewComments      ReviewComment[]
+  workflowEvents      WorkflowEvent[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+
+  @@index([status])
+  @@index([institutionId])
+  @@index([categoryId])
+  @@index([applicationNo])
+  @@index([deadlineDate])
+}
+
+// ─── CHECKLIST RULES ────────────────────────────────────────
+
+enum RuleSeverity {
+  ERROR
+  WARNING
+  INFO
+}
+
+enum RuleType {
+  FIELD_REQUIRED
+  FIELD_FORMAT
+  FIELD_RANGE
+  DOCUMENT_REQUIRED
+  DOCUMENT_FORMAT
+  CROSS_FIELD
+  DOCUMENT_CONTENT
+  CUSTOM
+}
+
+model ChecklistRule {
+  id             String             @id @default(uuid())
+  categoryId     String
+  category       ApplicationCategory @relation(fields: [categoryId], references: [id])
+  ruleCode       String             @unique
+  name           String
+  description    String
+  severity       RuleSeverity       @default(ERROR)
+  ruleType       RuleType
+  isRequired     Boolean            @default(true)
+  blocksSubmit   Boolean            @default(false)
+  fieldPath      String?            // e.g., "institutionName", "documents.landRecord"
+  validationMeta Json?              // Configuration for the rule (regex, range, etc.)
+  correctiveAction String?
+  ruleSource     String?            // e.g., "AICTE Handbook 2026-27"
+  isActive       Boolean            @default(true)
+  sortOrder      Int                @default(0)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  findings       ValidationFinding[]
+
+  @@index([categoryId])
+  @@index([ruleType])
+}
+
+// ─── DOCUMENTS ──────────────────────────────────────────────
+
+enum DocumentStatus {
+  PENDING
+  UPLOADED
+  PROCESSING
+  PROCESSED
+  FAILED
+  REJECTED
+}
+
+model ApplicationDocument {
+  id              String         @id @default(uuid())
+  applicationId   String
+  application     Application    @relation(fields: [applicationId], references: [id])
+  documentType    String         // e.g., "land_record", "faculty_list"
+  documentName    String
+  originalName    String
+  storedFilename  String         // Server-generated filename
+  storagePath     String         // Controlled path
+  mimeType        String
+  fileSize        Int
+  fileHash        String?        // SHA-256 hash
+  status          DocumentStatus @default(UPLOADED)
+  isRequired      Boolean        @default(true)
+  uploadedAt      DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  ocrResults      OcrResult[]
+
+  @@index([applicationId])
+  @@index([documentType])
+  @@unique([applicationId, documentType])
+}
+
+// ─── OCR RESULTS ────────────────────────────────────────────
+
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model OcrResult {
+  id             String   @id @default(uuid())
+  documentId     String
+  document       ApplicationDocument @relation(fields: [documentId], references: [id])
+  status         OcrStatus @default(PENDING)
+  extractedText  String?  @db.Text
+  extractedFields Json?   // { documentNumber: "...", institutionName: "...", dates: [...] }
+  confidence     Float?
+  pageCount      Int?
+  processingTime Int?     // milliseconds
+  warnings       String[]
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([documentId])
+}
+
+// ─── VALIDATION ─────────────────────────────────────────────
+
+enum ValidationRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model ValidationRun {
+  id            String              @id @default(uuid())
+  applicationId String
+  application   Application         @relation(fields: [applicationId], references: [id])
+  status        ValidationRunStatus @default(RUNNING)
+  triggeredBy   String              // userId or "system"
+  totalChecks   Int                 @default(0)
+  passed        Int                 @default(0)
+  warnings      Int                 @default(0)
+  errors        Int                 @default(0)
+  manualReview  Int                 @default(0)
+  completedAt   DateTime?
+  createdAt     DateTime            @default(now())
+
+  findings      ValidationFinding[]
+
+  @@index([applicationId])
+}
+
+enum FindingResult {
+  PASSED
+  WARNING
+  ERROR
+  MANUAL_REVIEW
+}
+
+model ValidationFinding {
+  id              String        @id @default(uuid())
+  validationRunId String
+  validationRun   ValidationRun @relation(fields: [validationRunId], references: [id])
+  ruleId          String
+  rule            ChecklistRule @relation(fields: [ruleId], references: [id])
+  result          FindingResult
+  message         String
+  evidence        String?       // The field value or document reference
+  fieldPath       String?
+  correctiveAction String?
+  blocksSubmission Boolean      @default(false)
+  requiresReview  Boolean       @default(false)
+  aiExplanation   String?       // Optional AI-generated explanation
+  isAiAssisted    Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  @@index([validationRunId])
+  @@index([result])
+}
+
+// ─── REVIEW ─────────────────────────────────────────────────
+
+model ReviewerAssignment {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  officerId     String
+  officer       User        @relation(fields: [officerId], references: [id])
+  assignedAt    DateTime    @default(now())
+  isActive      Boolean     @default(true)
+
+  @@index([applicationId])
+  @@index([officerId])
+  @@unique([applicationId, officerId])
+}
+
+model ReviewComment {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  officerId     String
+  officer       User        @relation(fields: [officerId], references: [id])
+  comment       String      @db.Text
+  commentType   String      @default("general") // "general", "correction", "approval", "rejection"
+  isInternal    Boolean     @default(false) // Officer-only notes
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+}
+
+// ─── WORKFLOW & AUDIT ───────────────────────────────────────
+
+model WorkflowEvent {
+  id            String            @id @default(uuid())
+  applicationId String
+  application   Application       @relation(fields: [applicationId], references: [id])
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  actorId       String?           // userId or null for system
+  actorType     String            @default("user") // "user" or "system"
+  comment       String?
+  createdAt     DateTime          @default(now())
+
+  @@index([applicationId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  type          String      // "deadline_approaching", "correction_required", "status_change", etc.
+  title         String
+  message       String
+  isRead        Boolean     @default(false)
+  actionUrl     String?
+  relatedDeadline DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([userId, isRead])
+  @@index([applicationId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id            String      @id @default(uuid())
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id])
+  action        String      // "application.created", "document.uploaded", "status.changed", etc.
+  entityType    String      // "application", "document", "validation", etc.
+  entityId      String?
+  details       Json?       // Additional context
+  ipAddress     String?
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

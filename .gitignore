@@ -1,0 +1,61 @@
+# ==========================================
+# Root .gitignore for AICTE Compliance System
+# ==========================================
+
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Production builds
+dist/
+dist-ssr/
+build/
+*/dist/
+*.tsbuildinfo
+
+# Environment configurations & secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+*.env
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Local SQLite databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+backend/prisma/*.db
+backend/*.db
+
+# Uploaded application attachments (keep folder with .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor & IDE files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating System files
+.DS_Store
+Thumbs.db
